@@ -1,3 +1,18 @@
+packer {
+  required_plugins {
+    sshkey = {
+      version = ">= 1.0.1"
+      source = "github.com/ivoronin/sshkey"
+    }
+    libvirt = {
+      version = ">= 0.5.0"
+      source  = "github.com/thomasklein94/libvirt"
+    }
+  }
+}
+
+data "sshkey" "install" {
+}
 
 variable "allowed_inbound_ip_addresses" {
   type    = list(string)
@@ -145,42 +160,58 @@ variable "vm_size" {
   default = "Standard_D4s_v4"
 }
 
-source "azure-arm" "build_vhd" {
-  allowed_inbound_ip_addresses           = "${var.allowed_inbound_ip_addresses}"
-  build_resource_group_name              = "${var.build_resource_group_name}"
-  capture_container_name                 = "images"
-  capture_name_prefix                    = "${var.capture_name_prefix}"
-  client_id                              = "${var.client_id}"
-  client_secret                          = "${var.client_secret}"
-  client_cert_path                       = "${var.client_cert_path}"
-  image_offer                            = "0001-com-ubuntu-server-jammy"
-  image_publisher                        = "canonical"
-  image_sku                              = "22_04-lts"
-  location                               = "${var.location}"
-  os_disk_size_gb                        = "86"
-  os_type                                = "Linux"
-  private_virtual_network_with_public_ip = "${var.private_virtual_network_with_public_ip}"
-  resource_group_name                    = "${var.resource_group}"
-  storage_account                        = "${var.storage_account}"
-  subscription_id                        = "${var.subscription_id}"
-  temp_resource_group_name               = "${var.temp_resource_group_name}"
-  tenant_id                              = "${var.tenant_id}"
-  virtual_network_name                   = "${var.virtual_network_name}"
-  virtual_network_resource_group_name    = "${var.virtual_network_resource_group_name}"
-  virtual_network_subnet_name            = "${var.virtual_network_subnet_name}"
-  vm_size                                = "${var.vm_size}"
+source "libvirt" "main" {
+  libvirt_uri = "qemu:///system"
 
-  dynamic "azure_tag" {
-    for_each = var.azure_tags
-    content {
-      name = azure_tag.key
-      value = azure_tag.value
-    }
+  vcpu   = 4
+  memory = 4096
+
+  network_interface {
+    type  = "managed"
+    alias = "communicator"
   }
+
+  # https://developer.hashicorp.com/packer/plugins/builders/libvirt#communicators-and-network-interfaces
+  communicator {
+    communicator         = "ssh"
+    ssh_username         = "ubuntu"
+    ssh_private_key_file = data.sshkey.install.private_key_path
+  }
+  network_address_source = "lease"
+
+  volume {
+    alias = "artifact"
+
+    source {
+      type     = "external"
+      # With newer releases, the URL and the checksum can change.
+      urls     = ["https://cloud-images.ubuntu.com/releases/22.04/release-20230302/ubuntu-22.04-server-cloudimg-amd64-disk-kvm.img"]
+      checksum = "3b11d66d8211a8c48ed9a727b9a74180ac11cd8118d4f7f25fc7d1e4a148eddc"
+    }
+
+    capacity   = "86G"
+    bus        = "sata"
+    format     = "qcow2"
+  }
+
+  volume {
+    source {
+      type = "cloud-init"
+      user_data = format("#cloud-config\n%s", jsonencode({
+        ssh_authorized_keys = [
+          data.sshkey.install.public_key,
+        ]
+      }))
+
+    }
+
+    bus        = "sata"
+  }
+  shutdown_mode = "acpi"
 }
 
 build {
-  sources = ["source.azure-arm.build_vhd"]
+  sources = ["source.libvirt.main"]
 
   provisioner "shell" {
     execute_command = "sudo sh -c '{{ .Vars }} {{ .Path }}'"
