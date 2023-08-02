@@ -180,6 +180,7 @@ source "libvirt" "main" {
   network_address_source = "lease"
 
   volume {
+    pool = "uvtool"
     alias = "artifact"
 
     source {
@@ -195,6 +196,7 @@ source "libvirt" "main" {
   }
 
   volume {
+    pool = "uvtool"
     source {
       type = "cloud-init"
       user_data = format("#cloud-config\n%s", jsonencode({
